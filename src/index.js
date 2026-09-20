@@ -1,0 +1,133 @@
+import pkg from 'whatsapp-web.js';
+const { Client, LocalAuth } = pkg;
+import qrcode from 'qrcode-terminal';
+import { handleMessage } from './modules/router.js';
+import { getDb } from './db/database.js';
+import { runMigrations } from './db/migrations.js';
+
+// Initialize WhatsApp client with local auth (persists session)
+const client = new Client({
+  authStrategy: new LocalAuth(),
+  puppeteer: {
+    headless: true,
+    executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  },
+});
+
+// Show QR code in terminal for scanning
+client.on('qr', (qr) => {
+  console.log('\n📱 Scan this QR code with WhatsApp:\n');
+  qrcode.generate(qr, { small: true });
+  console.log('\nOpen WhatsApp → Settings → Linked Devices → Link a Device\n');
+});
+
+client.on('ready', () => {
+  console.log('✅ WhatsApp Bot is ready!');
+  console.log('💬 Send "menu" or "hi" to the bot number to test.\n');
+});
+
+client.on('authenticated', () => {
+  console.log('🔐 Authenticated successfully.');
+});
+
+client.on('auth_failure', (msg) => {
+  console.error('❌ Authentication failed:', msg);
+});
+
+// Record when the bot started (in seconds) so we ignore historical messages
+const startupTime = Math.floor(Date.now() / 1000);
+
+// Handle incoming messages
+client.on('message', async (message) => {
+  try {
+    // Ignore messages sent before the bot started
+    if (message.timestamp < startupTime) {
+      return;
+    }
+
+    // Skip group messages and status updates
+    if (message.from.includes('@g.us') || message.from === 'status@broadcast') {
+      return;
+    }
+
+    // Parse the message into our standard format
+    const parsedMsg = {
+      from: message.from,
+      id: message.id._serialized,
+      name: message._data?.notifyName || 'User',
+      type: 'text',
+      text: message.body || '',
+    };
+
+    // Check for location messages
+    if (message.location) {
+      parsedMsg.type = 'location';
+      parsedMsg.location = {
+        latitude: message.location.latitude,
+        longitude: message.location.longitude,
+      };
+    }
+
+    console.log(`[msg] From ${parsedMsg.name} (${parsedMsg.from}): ${parsedMsg.text || '[location]'}`);
+
+    // Route to handler
+    await handleMessage(parsedMsg);
+  } catch (error) {
+    console.error('[msg] Error handling message:', error);
+  }
+});
+
+// Export sendTextMessage for use by modules
+export async function sendTextMessage(to, text) {
+  try {
+    await client.sendMessage(to, text);
+  } catch (error) {
+    console.error(`[send] Failed to send to ${to}:`, error.message);
+  }
+}
+
+export async function sendLocationRequest(to, text) {
+  const message = `${text}\n\n📍 _To share your location, tap the 📎 (attachment) icon, select *Location*, and send your current location._`;
+  await sendTextMessage(to, message);
+}
+
+export async function sendLocation(to, lat, lng, name, address) {
+  const mapLink = `https://maps.google.com/?q=${lat},${lng}`;
+  const message = `🏥 *${name}*\n📍 ${address}\n🗺️ ${mapLink}`;
+  await sendTextMessage(to, message);
+}
+
+export async function markAsRead() {}
+export async function sendReaction() {}
+
+// Boot up
+async function start() {
+  try {
+    console.log('🚀 Starting WhatsApp Emergency Bot...\n');
+
+    // Initialize database
+    await getDb();
+    await runMigrations();
+    console.log('[boot] Database ready.');
+
+    // Initialize WhatsApp
+    await client.initialize();
+  } catch (error) {
+    console.error('[boot] Startup failed:', error);
+    process.exit(1);
+  }
+}
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('\n[shutdown] Shutting down...');
+  await client.destroy();
+  process.exit(0);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.log('[system] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+start();

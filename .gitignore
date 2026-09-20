@@ -1,0 +1,5 @@
+node_modules/
+.env
+data/emergency_bot.db
+.wwebjs_auth/
+.wwebjs_cache/
