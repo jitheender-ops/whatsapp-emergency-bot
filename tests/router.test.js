@@ -14,16 +14,15 @@ const { initDb, closeDb } = await import('../src/db/database.js');
 const { runMigrations } = await import('../src/db/migrations.js');
 const { registerDonor } = await import('../src/db/models/user.js');
 const { handleMessage } = await import('../src/modules/router.js');
+const { handleAdmin } = await import('../src/modules/requests.js');
 
 const FRIEND = '911111111111@c.us';
 const PATIENT = '912222222222@c.us';
-const ADMIN = '919999999999@c.us';
 const say = (from, text) => handleMessage({ from, id: 'x', name: 'User', type: 'text', text });
 const lastTo = (to) => sent.filter((m) => m.to === to).at(-1)?.text || '';
 
 describe('Router', () => {
   beforeAll(async () => {
-    process.env.ADMIN_PHONES = '91 99999 99999';
     process.env.BOT_TRIGGER = '#Help';
     await initDb(':memory:');
     await runMigrations();
@@ -63,13 +62,16 @@ describe('Router', () => {
     expect(lastTo(FRIEND)).toContain('No request');
   });
 
-  test('admin can list and close requests; requester is told', async () => {
-    await say(FRIEND, 'admin list');        // not an admin → silent
-    expect(sent.filter((m) => m.text.includes('Active requests'))).toEqual([]);
+  test('admin commands from other people are ignored', async () => {
+    await say(FRIEND, 'admin done 1');
+    expect(sent.filter((m) => m.text.includes('fulfilled'))).toEqual([]);
+  });
 
-    await say(ADMIN, 'admin list');
-    expect(lastTo(ADMIN)).toContain('#1');
-    await say(ADMIN, 'admin done 1');
+  test('owner (self-chat) can list and close requests; requester is told', async () => {
+    const OWNER = '919999999999@c.us';
+    await handleAdmin({ from: OWNER, text: 'admin list' });
+    expect(lastTo(OWNER)).toContain('#1');
+    await handleAdmin({ from: OWNER, text: 'Admin done 1' });
     expect(lastTo(PATIENT)).toContain('fulfilled');
     await say(PATIENT, 'status 1');
     expect(lastTo(PATIENT)).toContain('*fulfilled*');

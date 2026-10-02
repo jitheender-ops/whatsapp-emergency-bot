@@ -14,7 +14,7 @@ import { handleOnboarding, showProfile } from './onboarding.js';
 import { handleBloodDonor, handleDonorRegistration } from './blood-donor.js';
 import { handleAmbulanceFinder } from './ambulance-finder.js';
 import { handleDocumentHelp } from './document-help.js';
-import { handleStatus, handleCancel, handleAdmin, isAdmin } from './requests.js';
+import { handleStatus, handleCancel } from './requests.js';
 import { upsertUser } from '../db/models/user.js';
 import { sendTextMessage } from '../whatsapp/client.js';
 
@@ -58,11 +58,11 @@ const HANDLERS = {
  * Routes an incoming parsed message to the appropriate feature handler.
  *
  * Routing priority:
- * 1. Admin commands from numbers in ADMIN_PHONES.
- * 2. Nobody gets a reply until they send the trigger word; then they
+ * (Admin commands never come through here — see index.js.)
+ * 1. Nobody gets a reply until they send the trigger word; then they
  *    stay active for ACTIVE_MS after their last message.
- * 3. An in-progress flow continues ("menu" escapes it).
- * 4. Menu choices, "status [id]", "cancel <id>". Anything else is ignored.
+ * 2. An in-progress flow continues ("menu" escapes it).
+ * 3. Menu choices, "status [id]", "cancel <id>". Anything else is ignored.
  *
  * @async
  * @param {object} parsedMessage - { from, id, name, type, text?, location? }
@@ -72,10 +72,6 @@ export async function handleMessage(parsedMessage) {
   try {
     const { from } = parsedMessage;
     const input = (parsedMessage.text || '').trim().toLowerCase();
-
-    if (/^admin\b/.test(input) && isAdmin(from)) {
-      return await handleAdmin(parsedMessage);
-    }
 
     const now = Date.now();
     if (input === triggerWord()) {

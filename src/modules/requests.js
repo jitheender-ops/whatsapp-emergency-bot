@@ -1,8 +1,8 @@
 /**
  * @module requests
  * @description Blood request status for requesters, plus admin commands
- * to list and close requests. Admins are set via ADMIN_PHONES in .env
- * (comma-separated numbers with country code, e.g. 919876543210).
+ * to list and close requests. The admin is whoever linked the bot by
+ * scanning the QR; they send commands in their "Message yourself" chat.
  */
 
 import { sendTextMessage } from '../whatsapp/client.js';
@@ -20,12 +20,6 @@ export function contactLink(waId) {
   return !server || server === 'c.us' ? `wa.me/${num.replace(/\D/g, '')}` : waId;
 }
 
-// Read lazily: .env is loaded after this module is imported.
-export function isAdmin(waId) {
-  const admins = (process.env.ADMIN_PHONES || '').split(',').map((p) => p.replace(/\D/g, '')).filter(Boolean);
-  return admins.includes(String(waId).split('@')[0]);
-}
-
 function formatRequest(r) {
   return `*#${r.id}* · 🩸 ${r.blood_group} · ${r.city || 'GPS location'} · *${r.status}*\n   🕒 ${r.created_at} UTC`;
 }
@@ -37,7 +31,7 @@ export async function handleStatus(msg, id) {
 
   if (id) {
     const r = getBloodRequestById(Number(id));
-    if (!r || (r.requester_phone !== from && !isAdmin(from))) {
+    if (!r || r.requester_phone !== from) {
       await sendTextMessage(from, `🔍 No request *#${id}* found for your number.`);
       return;
     }
@@ -82,7 +76,7 @@ const ADMIN_ACTIONS = {
   cancel: { status: 'cancelled', notice: 'ℹ️ Your blood request *#{id}* was *closed* by our team. Send *{trigger}* if you still need help.' },
 };
 
-/** Caller must already have checked isAdmin(). */
+/** Only call for the bot owner's self-chat — see index.js. */
 export async function handleAdmin(msg) {
   const { from } = msg;
   const [, action, id] = (msg.text || '').trim().toLowerCase().split(/\s+/);

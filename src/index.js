@@ -1,8 +1,9 @@
-import './config.js'; // loads .env (ADMIN_PHONES)
+import './config.js'; // loads .env (BOT_TRIGGER)
 import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
 import qrcode from 'qrcode-terminal';
 import { handleMessage } from './modules/router.js';
+import { handleAdmin } from './modules/requests.js';
 import { getDb } from './db/database.js';
 import { runMigrations } from './db/migrations.js';
 
@@ -25,7 +26,8 @@ client.on('qr', (qr) => {
 
 client.on('ready', () => {
   console.log('✅ WhatsApp Bot is ready!');
-  console.log('💬 Send "menu" or "hi" to the bot number to test.\n');
+  console.log(`💬 Others start the bot with "${process.env.BOT_TRIGGER || '#help'}".`);
+  console.log('🛠️  Admin: type "admin" in your own "Message yourself" chat.\n');
 });
 
 client.on('authenticated', () => {
@@ -80,6 +82,20 @@ client.on('message', async (message) => {
     await handleMessage(parsedMsg);
   } catch (error) {
     console.error('[msg] Error handling message:', error);
+  }
+});
+
+// Admin = the account that scanned the QR. 'message' never fires for our own
+// messages, so listen to 'message_create' and accept only "admin ..." typed
+// in the owner's "Message yourself" chat (not chats with other people).
+client.on('message_create', async (message) => {
+  try {
+    if (!message.fromMe || !/^admin\b/i.test((message.body || '').trim())) return;
+    const me = client.info?.wid?._serialized;
+    if (message.to !== me && message.to !== message.from) return;
+    await handleAdmin({ from: message.to, text: message.body });
+  } catch (error) {
+    console.error('[admin] Error handling command:', error);
   }
 });
 
