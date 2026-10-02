@@ -1,3 +1,4 @@
+import './config.js'; // loads .env (ADMIN_PHONES)
 import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
 import qrcode from 'qrcode-terminal';
@@ -46,8 +47,12 @@ client.on('message', async (message) => {
       return;
     }
 
-    // Skip group messages and status updates
-    if (message.from.includes('@g.us') || message.from === 'status@broadcast') {
+    // Only 1:1 chats from people — skip groups, status, broadcast lists, channels.
+    if (!/@(c\.us|lid)$/.test(message.from) || message.isStatus || message.broadcast) {
+      return;
+    }
+    // Only text and location; ignore calls, reactions, media, system notices.
+    if (!['chat', 'location'].includes(message.type)) {
       return;
     }
 

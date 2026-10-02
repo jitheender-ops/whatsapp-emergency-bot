@@ -9,6 +9,9 @@ const DB_PATH = path.join(__dirname, '..', '..', 'data', 'emergency_bot.db');
 /** @type {import('sql.js').Database|null} */
 let db = null;
 
+/** File backing the open db; null for in-memory (tests) so they never overwrite real data. */
+let dbPath = null;
+
 /** @type {import('sql.js').SqlJsStatic|null} */
 let SQL = null;
 
@@ -46,6 +49,7 @@ export async function getDb() {
   } else {
     db = new SQL.Database();
   }
+  dbPath = DB_PATH;
 
   // Enable WAL-like behavior and foreign keys
   db.run('PRAGMA foreign_keys = ON');
@@ -67,7 +71,8 @@ export async function initDb(customPath) {
 
   await initEngine();
 
-  if (customPath === ':memory:' || !customPath) {
+  dbPath = customPath === ':memory:' || !customPath ? null : customPath;
+  if (!dbPath) {
     db = new SQL.Database();
   } else {
     const dataDir = path.dirname(customPath);
@@ -91,15 +96,15 @@ export async function initDb(customPath) {
  * sql.js operates in-memory, so we need to explicitly persist.
  */
 export function saveDb() {
-  if (!db) return;
+  if (!db || !dbPath) return;
   const data = db.export();
   const buffer = Buffer.from(data);
 
-  const dataDir = path.dirname(DB_PATH);
+  const dataDir = path.dirname(dbPath);
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
-  fs.writeFileSync(DB_PATH, buffer);
+  fs.writeFileSync(dbPath, buffer);
 }
 
 /**

@@ -53,7 +53,9 @@ export async function handleAmbulanceFinder(msg) {
       await sendTextMessage(from, '🔍 Searching for nearby hospitals…');
 
       // Search for hospitals
-      const hospitals = await searchNearbyHospitals(location.latitude, location.longitude);
+      let hospitals = await searchNearbyHospitals(location.latitude, location.longitude);
+      // Rural areas often have nothing within 5 km — widen once.
+      if (!hospitals.length) hospitals = await searchNearbyHospitals(location.latitude, location.longitude, 20);
 
       if (hospitals && hospitals.length > 0) {
         // Format results as text
@@ -61,7 +63,7 @@ export async function handleAmbulanceFinder(msg) {
           const parts = [`*${i + 1}. ${h.name || 'Hospital'}*`];
           if (h.distance_km != null) parts.push(`   📍 Distance: ${h.distance_km} km`);
           if (h.address) parts.push(`   🏠 ${h.address}`);
-          if (h.phone) parts.push(`   📞 ${h.phone}`);
+          parts.push(`   📞 ${h.phone || 'Not listed — call 108 for ambulance'}`);
           return parts.join('\n');
         });
 

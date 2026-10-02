@@ -2,140 +2,112 @@
  * @module router
  * @description Intent router for incoming WhatsApp messages.
  * Routes parsed messages to the correct feature module based on
- * active session state or keyword/button matching.
+ * active session state or keyword matching.
+ *
+ * The bot shares a number with real conversations, so it stays silent
+ * unless someone explicitly asks for the service. Nothing is ever sent
+ * as a fallback to an unrecognised message.
  */
 
 import { getSession, clearSession } from '../services/session.js';
-import { handleOnboarding, showMainMenu, showProfile } from './onboarding.js';
+import { handleOnboarding, showProfile } from './onboarding.js';
 import { handleBloodDonor, handleDonorRegistration } from './blood-donor.js';
 import { handleAmbulanceFinder } from './ambulance-finder.js';
 import { handleDocumentHelp } from './document-help.js';
+import { handleStatus, handleCancel, handleAdmin, isAdmin } from './requests.js';
+import { getUserByPhone, upsertUser } from '../db/models/user.js';
 import { sendTextMessage } from '../whatsapp/client.js';
 
+/** Unambiguous service requests — anyone can start the bot with these. */
+const OPEN_TRIGGERS = {
+  menu: 'onboarding',
+  start: 'onboarding',
+  blood: 'blood_donor',
+  donor: 'blood_donor',
+  hospital: 'ambulance_finder',
+  ambulance: 'ambulance_finder',
+  register: 'donor_registration',
+};
+
 /**
- * Determines the intent from the parsed message text, buttonId, or listId.
- * @param {object} parsedMessage - The parsed incoming message.
- * @returns {string} The resolved intent key.
+ * Everyday words and menu digits. Only honoured for people who have
+ * already used the bot, so a friend's "hi" or "1" gets no bot reply.
  */
-function resolveIntent(parsedMessage) {
-  const { text, buttonId, listId } = parsedMessage;
-  const input = (text || '').trim().toLowerCase();
-  const btnId = (buttonId || '').trim().toLowerCase();
-  const lstId = (listId || '').trim().toLowerCase();
+const MEMBER_TRIGGERS = {
+  hi: 'onboarding',
+  hello: 'onboarding',
+  hey: 'onboarding',
+  help: 'onboarding',
+  0: 'onboarding',
+  1: 'blood_donor',
+  2: 'ambulance_finder',
+  3: 'donor_registration',
+  4: 'status',
+  5: 'document_help',
+  emergency: 'ambulance_finder',
+  signup: 'donor_registration',
+  document: 'document_help',
+  lost: 'document_help',
+  profile: 'profile',
+};
 
-  // --- Blood donor search ---
-  if (
-    ['blood', 'donor', '1'].includes(input) ||
-    btnId.startsWith('menu_blood') ||
-    lstId.startsWith('menu_blood')
-  ) {
-    return 'blood_donor';
-  }
-
-  // --- Ambulance / emergency / hospital ---
-  if (
-    ['ambulance', 'emergency', 'hospital', '2'].includes(input) ||
-    btnId === 'menu_ambulance' ||
-    lstId === 'menu_ambulance'
-  ) {
-    return 'ambulance_finder';
-  }
-
-  // --- Document help ---
-  if (
-    ['document', 'lost', 'missing', '3'].includes(input) ||
-    btnId === 'menu_documents' ||
-    lstId === 'menu_documents'
-  ) {
-    return 'document_help';
-  }
-
-  // --- Donor registration ---
-  if (
-    ['register', 'signup', '4'].includes(input) ||
-    btnId === 'menu_register_donor' ||
-    lstId === 'menu_register_donor'
-  ) {
-    return 'donor_registration';
-  }
-
-  // --- Profile ---
-  if (btnId === 'menu_my_profile' || lstId === 'menu_my_profile') {
-    return 'profile';
-  }
-
-  // --- Main menu / onboarding ---
-  if (['menu', 'hi', 'hello', 'hey', 'start', 'help', '0'].includes(input)) {
-    return 'onboarding';
-  }
-
-  return 'unknown';
-}
+const HANDLERS = {
+  blood_donor: handleBloodDonor,
+  donor_registration: handleDonorRegistration,
+  ambulance_finder: handleAmbulanceFinder,
+  document_help: handleDocumentHelp,
+};
 
 /**
  * Routes an incoming parsed message to the appropriate feature handler.
  *
  * Routing priority:
- * 1. If the user has an active session, delegate to that session's module handler.
- * 2. Otherwise, resolve intent via keyword / button / list matching.
- * 3. Fall back to showing the main menu.
+ * 1. Admin commands from numbers in ADMIN_PHONES.
+ * 2. An active session continues in its module ("menu" escapes it).
+ * 3. Keyword intent — open triggers for anyone; member triggers and
+ *    "status [id]" / "cancel <id>" for people who already used the bot.
+ * 4. Anything else is ignored.
  *
  * @async
- * @param {object} parsedMessage - Parsed incoming message.
- * @param {string} parsedMessage.from  - Sender phone number.
- * @param {string} parsedMessage.id    - Message ID.
- * @param {string} parsedMessage.name  - Sender profile name.
- * @param {string} parsedMessage.type  - Message type (text, button_reply, list_reply, location, etc.).
- * @param {string} [parsedMessage.text]     - Text body (if type is text).
- * @param {string} [parsedMessage.buttonId] - Button reply ID.
- * @param {string} [parsedMessage.listId]   - List reply ID.
- * @param {object} [parsedMessage.location] - Location payload { latitude, longitude }.
+ * @param {object} parsedMessage - { from, id, name, type, text?, location? }
  * @returns {Promise<void>}
  */
 export async function handleMessage(parsedMessage) {
   try {
     const { from } = parsedMessage;
+    const input = (parsedMessage.text || '').trim().toLowerCase();
 
-    // 1. Check for an active session and route accordingly
+    if (/^admin\b/.test(input) && isAdmin(from)) {
+      return await handleAdmin(parsedMessage);
+    }
+
     const session = getSession(from);
-
-    if (session) {
-      switch (session.module) {
-        case 'blood_donor':
-          return await handleBloodDonor(parsedMessage);
-        case 'donor_registration':
-          return await handleDonorRegistration(parsedMessage);
-        case 'ambulance_finder':
-          return await handleAmbulanceFinder(parsedMessage);
-        case 'document_help':
-          return await handleDocumentHelp(parsedMessage);
-        default:
-          // Unknown session module — clear it and fall through to intent routing
-          clearSession(from);
-          break;
+    if (session.module) {
+      if (input !== 'menu' && HANDLERS[session.module]) {
+        return await HANDLERS[session.module](parsedMessage);
       }
+      clearSession(from);
     }
 
-    // 2. Resolve intent from message content
-    const intent = resolveIntent(parsedMessage);
+    const known = Boolean(getUserByPhone(from));
 
-    switch (intent) {
-      case 'blood_donor':
-        return await handleBloodDonor(parsedMessage);
-      case 'ambulance_finder':
-        return await handleAmbulanceFinder(parsedMessage);
-      case 'document_help':
-        return await handleDocumentHelp(parsedMessage);
-      case 'donor_registration':
-        return await handleDonorRegistration(parsedMessage);
-      case 'profile':
-        return await showProfile(from);
-      case 'onboarding':
-        return await handleOnboarding(parsedMessage);
-      default:
-        // 3. Fallback — show the main menu
-        return await showMainMenu(from);
+    const cmd = known && input.match(/^(status|cancel)(?:\s+#?(\d+))?$/);
+    if (cmd) {
+      return cmd[1] === 'status'
+        ? await handleStatus(parsedMessage, cmd[2])
+        : await handleCancel(parsedMessage, cmd[2]);
     }
+
+    const intent = OPEN_TRIGGERS[input] || (known && MEMBER_TRIGGERS[input]);
+    if (!intent) return; // not for the bot — stay silent
+
+    // Asking for the service = opt-in; also required before a blood request (FK on users.phone).
+    if (!known) upsertUser({ phone: from });
+
+    if (intent === 'onboarding') return await handleOnboarding(parsedMessage);
+    if (intent === 'status') return await handleStatus(parsedMessage);
+    if (intent === 'profile') return await showProfile(from);
+    return await HANDLERS[intent](parsedMessage);
   } catch (error) {
     console.error('[Router] Error handling message:', error);
     try {

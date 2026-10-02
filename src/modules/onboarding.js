@@ -1,12 +1,11 @@
 import { sendTextMessage } from '../whatsapp/client.js';
-import { upsertUser, getUserByPhone } from '../db/models/user.js';
+import { getUserByPhone } from '../db/models/user.js';
 import { clearSession } from '../services/session.js';
 
 export async function handleOnboarding(msg) {
   try {
     const { from, name } = msg;
-    await upsertUser({ phone: from, name });
-    const greeting = `👋 Hello${name ? ` ${name}` : ''}! Welcome to the *Emergency Assistance Bot*.\n\nI can help you with:\n🩸 Finding blood donors\n🚑 Locating nearby hospitals\n📄 Replacing lost documents\n📝 Registering as a donor`;
+    const greeting = `👋 Hello${name ? ` ${name}` : ''}! Welcome to the *Emergency Assistance Bot*.\n\nI can help you with:\n🩸 Finding blood donors\n🚑 Locating nearby hospitals\n📝 Registering as a donor\n📋 Tracking your blood request`;
     await sendTextMessage(from, greeting);
     await showMainMenu(from);
   } catch (error) {
@@ -18,7 +17,7 @@ export async function handleOnboarding(msg) {
 export async function showMainMenu(phone) {
   try {
     clearSession(phone);
-    const menu = `*Main Menu*\nPlease reply with a number:\n\n1. 🩸 Find Blood Donors\n2. 🚑 Find Nearest Hospital\n3. 📄 Lost Document Help\n4. 📝 Register as a Donor\n\n_Type your choice (e.g. 1)_`;
+    const menu = `*Main Menu*\nPlease reply with a number:\n\n1. 🩸 Find Blood Donors\n2. 🚑 Find Nearest Hospital\n3. 📝 Register as a Donor\n4. 📋 My Request Status\n5. 📄 Lost Document Help\n\n_Type your choice (e.g. 1). Type *menu* anytime to come back here._`;
     await sendTextMessage(phone, menu);
   } catch (error) {
     console.error('[Onboarding] Error showing menu:', error);

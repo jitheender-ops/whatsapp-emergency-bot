@@ -1,7 +1,9 @@
 import { sendTextMessage } from '../whatsapp/client.js';
 import { getSession, setSession, clearSession } from '../services/session.js';
-import { findDonors, findDonorsNearby, registerDonor, upsertUser } from '../db/models/user.js';
+import { findDonors, findDonorsNearby, registerDonor } from '../db/models/user.js';
 import { createBloodRequest } from '../db/models/blood-request.js';
+import { reverseGeocode } from '../services/geocoding.js';
+import { contactLink } from './requests.js';
 
 function extractBloodGroup(input) {
   const bg = (input || '').trim().toUpperCase().replace(/\s/g, '');
@@ -40,36 +42,45 @@ export async function handleBloodDonor(msg) {
       const { bloodGroup } = session.data;
       await sendTextMessage(from, '🔍 Searching for donors…');
       let donors = [];
+      let request;
 
       if (location && location.latitude && location.longitude) {
         donors = findDonorsNearby(bloodGroup, location.latitude, location.longitude);
-        createBloodRequest({ requester_phone: from, blood_group: bloodGroup, latitude: location.latitude, longitude: location.longitude });
+        // Most donors register with a city only, so fall back to the city at that GPS point.
+        const city = donors.length ? undefined : (await reverseGeocode(location.latitude, location.longitude))?.city;
+        if (city) donors = findDonors(bloodGroup, city);
+        request = createBloodRequest({ requester_phone: from, blood_group: bloodGroup, city, latitude: location.latitude, longitude: location.longitude });
       } else {
         const city = (text || '').trim();
         donors = findDonors(bloodGroup, city || undefined);
-        createBloodRequest({ requester_phone: from, blood_group: bloodGroup, city: city || undefined });
+        request = createBloodRequest({ requester_phone: from, blood_group: bloodGroup, city: city || undefined });
       }
 
-      if (donors && donors.length > 0) {
+      donors = donors.filter((d) => d.phone !== from);
+      const requestLine = `🆔 Request ID: *#${request.id}* — status: *${request.status}*\nType *status ${request.id}* anytime to check it.`;
+
+      if (donors.length > 0) {
         const donorLines = donors.map((d, i) => {
-          const parts = [`${i + 1}. *${d.name || 'Anonymous'}*`, `   🩸 ${d.blood_group}`];
+          const parts = [`${i + 1}. *${d.name || 'Anonymous'}*`, `   🩸 ${d.blood_group}`, `   📞 ${contactLink(d.phone)}`];
           if (d.city) parts.push(`   🏙️ ${d.city}`);
           if (d.distance_km != null) parts.push(`   📍 ${d.distance_km} km away`);
           return parts.join('\n');
         });
 
         const resultMsg = [
-          `✅ Found *${donors.length}* donor(s) for blood group *${bloodGroup}*:\n`,
+          `✅ Found *${donors.length}* donor(s) who can give to *${bloodGroup}*:\n`,
           ...donorLines,
           '',
           '_Please contact them directly._',
+          '',
+          requestLine,
           '',
           'Type *menu* to go back to the main menu.',
         ].join('\n');
 
         await sendTextMessage(from, resultMsg);
       } else {
-        await sendTextMessage(from, `😔 No donors found for *${bloodGroup}*.\n🔔 Your request is recorded. We will notify you if a matching donor registers.\n\nType *menu* to go back.`);
+        await sendTextMessage(from, `😔 No donors found for *${bloodGroup}* yet.\n🔔 Your request is recorded.\n\n${requestLine}\n\n🏥 Blood Bank helpline: *1910*\nType *menu* to go back.`);
       }
 
       clearSession(from);

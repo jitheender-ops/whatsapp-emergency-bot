@@ -56,6 +56,29 @@ export function getActiveRequestsByPhone(phone) {
 }
 
 /**
+ * Most recent requests (any status) made by a phone.
+ * @param {string} phone
+ * @returns {Object[]}
+ */
+export function getRecentRequestsByPhone(phone, limit = 5) {
+  return queryAll(
+    'SELECT * FROM blood_requests WHERE requester_phone = ? ORDER BY id DESC LIMIT ?',
+    [phone, limit]
+  );
+}
+
+/**
+ * All active requests, newest first (admin view).
+ * @returns {Object[]}
+ */
+export function listActiveRequests(limit = 20) {
+  return queryAll(
+    "SELECT * FROM blood_requests WHERE status = 'active' ORDER BY id DESC LIMIT ?",
+    [limit]
+  );
+}
+
+/**
  * Update the status of a blood request.
  * @param {number} id
  * @param {'fulfilled'|'expired'|'cancelled'} status

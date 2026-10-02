@@ -4,6 +4,28 @@ import { runSql, queryOne, queryAll } from '../database.js';
  * User model — handles CRUD for users and blood donors.
  */
 
+/** Recipient blood group → donor groups that can safely give to it. */
+export const COMPATIBLE_DONORS = {
+  'O-': ['O-'],
+  'O+': ['O+', 'O-'],
+  'A-': ['A-', 'O-'],
+  'A+': ['A+', 'A-', 'O+', 'O-'],
+  'B-': ['B-', 'O-'],
+  'B+': ['B+', 'B-', 'O+', 'O-'],
+  'AB-': ['AB-', 'A-', 'B-', 'O-'],
+  'AB+': ['AB+', 'AB-', 'A+', 'A-', 'B+', 'B-', 'O+', 'O-'],
+};
+
+/** SQL fragment + params matching compatible donor groups, exact group ranked first. */
+function groupFilter(bloodGroup) {
+  const groups = COMPATIBLE_DONORS[bloodGroup] || [bloodGroup];
+  return {
+    where: `blood_group IN (${groups.map(() => '?').join(', ')})`,
+    order: '(blood_group = ?) DESC, updated_at DESC',
+    params: groups,
+  };
+}
+
 /**
  * Create or update a user by phone number.
  * Uses upsert pattern (INSERT ... ON CONFLICT UPDATE).
@@ -59,28 +81,29 @@ export function getUserByPhone(phone) {
 }
 
 /**
- * Find available donors by blood group, optionally filtered by city.
+ * Find available donors compatible with a blood group, optionally filtered by city.
  * @param {string} bloodGroup
  * @param {string} [city]
  * @returns {Object[]}
  */
 export function findDonors(bloodGroup, city) {
+  const g = groupFilter(bloodGroup);
   if (city) {
     return queryAll(`
       SELECT * FROM users 
-      WHERE blood_group = ? AND is_donor = 1 AND is_available = 1 
+      WHERE ${g.where} AND is_donor = 1 AND is_available = 1 
         AND LOWER(city) = LOWER(?)
-      ORDER BY updated_at DESC
+      ORDER BY ${g.order}
       LIMIT 20
-    `, [bloodGroup, city]);
+    `, [...g.params, city, bloodGroup]);
   }
 
   return queryAll(`
     SELECT * FROM users 
-    WHERE blood_group = ? AND is_donor = 1 AND is_available = 1
-    ORDER BY updated_at DESC
+    WHERE ${g.where} AND is_donor = 1 AND is_available = 1
+    ORDER BY ${g.order}
     LIMIT 20
-  `, [bloodGroup]);
+  `, [...g.params, bloodGroup]);
 }
 
 /**
@@ -98,21 +121,23 @@ export function findDonorsNearby(bloodGroup, lat, lng, radiusKm = 15) {
   const latDelta = radiusKm / 111;
   const lngDelta = radiusKm / (111 * Math.cos((lat * Math.PI) / 180));
 
+  const g = groupFilter(bloodGroup);
   const candidates = queryAll(`
     SELECT * FROM users
-    WHERE blood_group = ? 
+    WHERE ${g.where}
       AND is_donor = 1 
       AND is_available = 1
       AND latitude IS NOT NULL
       AND longitude IS NOT NULL
       AND latitude BETWEEN ? AND ?
       AND longitude BETWEEN ? AND ?
-    ORDER BY updated_at DESC
+    ORDER BY ${g.order}
     LIMIT 50
   `, [
-    bloodGroup,
+    ...g.params,
     lat - latDelta, lat + latDelta,
     lng - lngDelta, lng + lngDelta,
+    bloodGroup,
   ]);
 
   // Calculate actual Haversine distance and filter
