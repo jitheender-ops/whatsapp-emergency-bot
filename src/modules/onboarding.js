@@ -17,7 +17,7 @@ export async function handleOnboarding(msg) {
 export async function showMainMenu(phone) {
   try {
     clearSession(phone);
-    const menu = `*Main Menu*\nPlease reply with a number:\n\n1. 🩸 Find Blood Donors\n2. 🚑 Find Nearest Hospital\n3. 📝 Register as a Donor\n4. 📋 My Request Status\n5. 📄 Lost Document Help\n\n_Type your choice (e.g. 1). Type *menu* anytime to come back here._`;
+    const menu = `*Main Menu*\nPlease reply with a number:\n\n1. 🩸 Find Blood Donors\n2. 🚑 Find Nearest Hospital\n3. 📝 Register as a Donor\n4. 📋 My Request Status\n5. 📄 Lost Document Help\n\n_Type your choice (e.g. 1). Type *menu* anytime to come back here._\n_Inactive for 30 min? Send *${process.env.BOT_TRIGGER || '#help'}* again._`;
     await sendTextMessage(phone, menu);
   } catch (error) {
     console.error('[Onboarding] Error showing menu:', error);

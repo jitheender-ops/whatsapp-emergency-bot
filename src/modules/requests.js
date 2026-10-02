@@ -79,7 +79,7 @@ const ADMIN_HELP = [
 
 const ADMIN_ACTIONS = {
   done: { status: 'fulfilled', notice: '🎉 Your blood request *#{id}* has been marked *fulfilled*. Wishing a speedy recovery!' },
-  cancel: { status: 'cancelled', notice: 'ℹ️ Your blood request *#{id}* was *closed* by our team. Type *blood* if you still need help.' },
+  cancel: { status: 'cancelled', notice: 'ℹ️ Your blood request *#{id}* was *closed* by our team. Send *{trigger}* if you still need help.' },
 };
 
 /** Caller must already have checked isAdmin(). */
@@ -110,5 +110,5 @@ export async function handleAdmin(msg) {
   }
   updateRequestStatus(r.id, act.status);
   await sendTextMessage(from, `✅ Request *#${r.id}* → *${act.status}*.`);
-  await sendTextMessage(r.requester_phone, act.notice.replace('{id}', r.id));
+  await sendTextMessage(r.requester_phone, act.notice.replace('{id}', r.id).replace('{trigger}', process.env.BOT_TRIGGER || '#help'));
 }

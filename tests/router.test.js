@@ -24,6 +24,7 @@ const lastTo = (to) => sent.filter((m) => m.to === to).at(-1)?.text || '';
 describe('Router', () => {
   beforeAll(async () => {
     process.env.ADMIN_PHONES = '91 99999 99999';
+    process.env.BOT_TRIGGER = '#Help';
     await initDb(':memory:');
     await runMigrations();
     registerDonor('913333333333@c.us', 'Ravi', 'O-', 'Delhi');
@@ -32,13 +33,13 @@ describe('Router', () => {
   afterAll(() => closeDb());
   beforeEach(() => { sent.length = 0; });
 
-  test('ignores ordinary chats from people who never asked for the bot', async () => {
-    for (const t of ['hi', 'hello bro', '1', 'lost my keys', 'status', 'ok']) await say(FRIEND, t);
+  test('ignores everything until the trigger word, even service words', async () => {
+    for (const t of ['hi', 'menu', 'blood', 'hospital', '1', 'status', 'help', 'ok']) await say(FRIEND, t);
     expect(sent).toEqual([]);
   });
 
-  test('menu opts in; afterwards digits work', async () => {
-    await say(PATIENT, 'menu');
+  test('trigger word opts in (case-insensitive); afterwards digits work', async () => {
+    await say(PATIENT, '#HELP');
     expect(lastTo(PATIENT)).toContain('Main Menu');
     await say(PATIENT, '1');
     expect(lastTo(PATIENT)).toContain('blood group');
@@ -57,7 +58,7 @@ describe('Router', () => {
   test('status shows the request; others cannot see it', async () => {
     await say(PATIENT, 'status 1');
     expect(lastTo(PATIENT)).toContain('*#1*');
-    await say(FRIEND, 'menu');
+    await say(FRIEND, '#help');
     await say(FRIEND, 'status 1');
     expect(lastTo(FRIEND)).toContain('No request');
   });
@@ -74,7 +75,19 @@ describe('Router', () => {
     expect(lastTo(PATIENT)).toContain('*fulfilled*');
   });
 
+  test('goes silent again after the active window', async () => {
+    const realNow = Date.now;
+    Date.now = () => realNow() + 31 * 60 * 1000;
+    try {
+      await say(PATIENT, 'menu');
+      expect(sent).toEqual([]);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
   test('menu escapes a half-finished flow', async () => {
+    await say(PATIENT, '#help');
     await say(PATIENT, 'blood');
     await say(PATIENT, 'menu');
     expect(lastTo(PATIENT)).toContain('Main Menu');

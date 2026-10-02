@@ -5,8 +5,8 @@
  * active session state or keyword matching.
  *
  * The bot shares a number with real conversations, so it stays silent
- * unless someone explicitly asks for the service. Nothing is ever sent
- * as a fallback to an unrecognised message.
+ * until someone sends the trigger word (BOT_TRIGGER). Nothing is ever
+ * sent as a fallback to an unrecognised message.
  */
 
 import { getSession, clearSession } from '../services/session.js';
@@ -15,39 +15,35 @@ import { handleBloodDonor, handleDonorRegistration } from './blood-donor.js';
 import { handleAmbulanceFinder } from './ambulance-finder.js';
 import { handleDocumentHelp } from './document-help.js';
 import { handleStatus, handleCancel, handleAdmin, isAdmin } from './requests.js';
-import { getUserByPhone, upsertUser } from '../db/models/user.js';
+import { upsertUser } from '../db/models/user.js';
 import { sendTextMessage } from '../whatsapp/client.js';
 
-/** Unambiguous service requests — anyone can start the bot with these. */
-const OPEN_TRIGGERS = {
-  menu: 'onboarding',
-  start: 'onboarding',
-  blood: 'blood_donor',
-  donor: 'blood_donor',
-  hospital: 'ambulance_finder',
-  ambulance: 'ambulance_finder',
-  register: 'donor_registration',
-};
-
 /**
- * Everyday words and menu digits. Only honoured for people who have
- * already used the bot, so a friend's "hi" or "1" gets no bot reply.
+ * The ONLY way to start the bot. Set BOT_TRIGGER in .env; matched
+ * case-insensitively against the whole message. Read lazily because
+ * .env loads after this module is imported.
  */
-const MEMBER_TRIGGERS = {
-  hi: 'onboarding',
-  hello: 'onboarding',
-  hey: 'onboarding',
-  help: 'onboarding',
+const triggerWord = () => (process.env.BOT_TRIGGER || '#help').trim().toLowerCase();
+
+/** After the trigger, a person can use the bot this long since their last bot message. */
+const ACTIVE_MS = 30 * 60 * 1000;
+const activeUntil = new Map();
+
+/** Menu choices and shortcuts — only honoured while a person is active. */
+const INTENTS = {
+  menu: 'onboarding',
   0: 'onboarding',
   1: 'blood_donor',
   2: 'ambulance_finder',
   3: 'donor_registration',
   4: 'status',
   5: 'document_help',
-  emergency: 'ambulance_finder',
-  signup: 'donor_registration',
+  blood: 'blood_donor',
+  donor: 'blood_donor',
+  hospital: 'ambulance_finder',
+  ambulance: 'ambulance_finder',
+  register: 'donor_registration',
   document: 'document_help',
-  lost: 'document_help',
   profile: 'profile',
 };
 
@@ -63,10 +59,10 @@ const HANDLERS = {
  *
  * Routing priority:
  * 1. Admin commands from numbers in ADMIN_PHONES.
- * 2. An active session continues in its module ("menu" escapes it).
- * 3. Keyword intent — open triggers for anyone; member triggers and
- *    "status [id]" / "cancel <id>" for people who already used the bot.
- * 4. Anything else is ignored.
+ * 2. Nobody gets a reply until they send the trigger word; then they
+ *    stay active for ACTIVE_MS after their last message.
+ * 3. An in-progress flow continues ("menu" escapes it).
+ * 4. Menu choices, "status [id]", "cancel <id>". Anything else is ignored.
  *
  * @async
  * @param {object} parsedMessage - { from, id, name, type, text?, location? }
@@ -81,6 +77,20 @@ export async function handleMessage(parsedMessage) {
       return await handleAdmin(parsedMessage);
     }
 
+    const now = Date.now();
+    if (input === triggerWord()) {
+      upsertUser({ phone: from }); // required before a blood request (FK on users.phone)
+      activeUntil.set(from, now + ACTIVE_MS);
+      clearSession(from);
+      return await handleOnboarding(parsedMessage);
+    }
+    if (!(activeUntil.get(from) > now)) {
+      activeUntil.delete(from);
+      clearSession(from);
+      return; // not triggered — stay silent
+    }
+    activeUntil.set(from, now + ACTIVE_MS);
+
     const session = getSession(from);
     if (session.module) {
       if (input !== 'menu' && HANDLERS[session.module]) {
@@ -89,20 +99,15 @@ export async function handleMessage(parsedMessage) {
       clearSession(from);
     }
 
-    const known = Boolean(getUserByPhone(from));
-
-    const cmd = known && input.match(/^(status|cancel)(?:\s+#?(\d+))?$/);
+    const cmd = input.match(/^(status|cancel)(?:\s+#?(\d+))?$/);
     if (cmd) {
       return cmd[1] === 'status'
         ? await handleStatus(parsedMessage, cmd[2])
         : await handleCancel(parsedMessage, cmd[2]);
     }
 
-    const intent = OPEN_TRIGGERS[input] || (known && MEMBER_TRIGGERS[input]);
-    if (!intent) return; // not for the bot — stay silent
-
-    // Asking for the service = opt-in; also required before a blood request (FK on users.phone).
-    if (!known) upsertUser({ phone: from });
+    const intent = INTENTS[input];
+    if (!intent) return;
 
     if (intent === 'onboarding') return await handleOnboarding(parsedMessage);
     if (intent === 'status') return await handleStatus(parsedMessage);
