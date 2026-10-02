@@ -70,6 +70,7 @@ client.on('message', async (message) => {
     // Check for location messages
     if (message.location) {
       parsedMsg.type = 'location';
+      parsedMsg.text = ''; // body is a base64 map thumbnail, not text
       parsedMsg.location = {
         latitude: message.location.latitude,
         longitude: message.location.longitude,
