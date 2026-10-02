@@ -88,11 +88,20 @@ client.on('message', async (message) => {
 // Admin = the account that scanned the QR. 'message' never fires for our own
 // messages, so listen to 'message_create' and accept only "admin ..." typed
 // in the owner's "Message yourself" chat (not chats with other people).
+// The self-chat may be addressed by phone id (…@c.us) or hidden id (…@lid).
+let ownIdsCache;
+async function ownIds() {
+  if (ownIdsCache) return ownIdsCache;
+  const me = client.info.wid._serialized;
+  const [{ lid } = {}] = await client.getContactLidAndPhone([me]).catch(() => []);
+  return (ownIdsCache = [me, lid].filter(Boolean));
+}
+
 client.on('message_create', async (message) => {
   try {
     if (!message.fromMe || !/^admin\b/i.test((message.body || '').trim())) return;
-    const me = client.info?.wid?._serialized;
-    if (message.to !== me && message.to !== message.from) return;
+    if (!(await ownIds()).includes(message.to)) return; // not the "Message yourself" chat
+    console.log(`[admin] ${message.body}`);
     await handleAdmin({ from: message.to, text: message.body });
   } catch (error) {
     console.error('[admin] Error handling command:', error);
